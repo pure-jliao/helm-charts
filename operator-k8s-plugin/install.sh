@@ -56,13 +56,16 @@ done
 CLUSTERROLEAPIVERSION="$(${KUBECTL} explain ClusterRole | grep "VERSION:" | awk '{ print $2 }')"
 CLUSTERROLEBINDINGAPIVERSION="$(${KUBECTL} explain ClusterRoleBinding | grep "VERSION:" | awk '{ print $2 }')"
 ROLEAPIVERSION="$(${KUBECTL} explain Role | grep "VERSION:" | awk '{ print $2 }')"
-if [[ "${ORCHESTRATOR}" == "openshift" ]]; then
-    ROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1beta1"
-else
-    ROLEBINDINGAPIVERSION="$(${KUBECTL} explain RoleBinding | grep "VERSION:" | awk '{ print $2 }')"
-fi
+ROLEBINDINGAPIVERSION="$(${KUBECTL} explain RoleBinding | grep "VERSION:" | awk '{ print $2 }')"
 DEPLOYMENTAPIVERSION="$(${KUBECTL} explain Deployment | grep "VERSION:" | awk '{ print $2 }')"
 
+if [[ "${ORCHESTRATOR}" == "openshift" ]]; then
+    CLUSTERROLEAPIVERSION="rbac.authorization.k8s.io/v1"
+    CLUSTERROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1"
+    ROLEAPIVERSION="rbac.authorization.k8s.io/v1"
+    ROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1"
+    DEPLOYMENTAPIVERSION="apps/v1"
+fi
 if [[ -z ${VALUESFILE} || ! -f ${VALUESFILE} ]]; then
     echo "File ${VALUESFILE} does not exist"
     usage
