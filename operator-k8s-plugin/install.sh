@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+
+set -xe
 IMAGE=quay.io/purestorage/pso-operator:v0.0.11
 NAMESPACE=pso-operator
 KUBECTL=oc
@@ -184,6 +186,15 @@ rules:
     verbs:
     - \"create\"
     - \"delete\"
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterrolebindings
+    - clusterroles
+    resourceNames:
+    - \"pure-provisioner-rights\"
+    - \"pure-provisioner-clusterrole\"
+    verbs:
     - \"get\"
 # On Openshift ClusterRoleBindings belong to a different apiGroup.
   - apiGroups:
@@ -194,6 +205,16 @@ rules:
     verbs:
     - \"create\"
     - \"delete\"
+# PSO creates the ClusterRoleBinding 'pure-provisioner-rights' and should be able to get this by resource name
+  - apiGroups:
+    - authorization.openshift.io
+    resources:
+    - clusterrolebindings
+    - clusterroles
+    resourceNames:
+    - \"pure-provisioner-rights\"
+    - \"pure-provisioner-clusterrole\"
+    verbs:
     - \"get\"
 # Need the same permissions as pure-provisioner-clusterrole to be able to create it
   - apiGroups:
