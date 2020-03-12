@@ -62,10 +62,10 @@ ROLEBINDINGAPIVERSION="$(${KUBECTL} explain RoleBinding | grep "VERSION:" | awk 
 DEPLOYMENTAPIVERSION="$(${KUBECTL} explain Deployment | grep "VERSION:" | awk '{ print $2 }')"
 
 if [[ "${ORCHESTRATOR}" == "openshift" ]]; then
-    CLUSTERROLEAPIVERSION="rbac.authorization.k8s.io/v1"
-    CLUSTERROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1"
-    ROLEAPIVERSION="rbac.authorization.k8s.io/v1"
-    ROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1"
+    CLUSTERROLEAPIVERSION="rbac.authorization.k8s.io/v1beta1"
+    CLUSTERROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1beta1"
+    ROLEAPIVERSION="rbac.authorization.k8s.io/v1beta1"
+    ROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1beta1"
     DEPLOYMENTAPIVERSION="apps/v1"
 fi
 if [[ -z ${VALUESFILE} || ! -f ${VALUESFILE} ]]; then
@@ -103,7 +103,7 @@ supplementalGroups:
 
     # Grant this SCC to the service account creating the flex-daemonset
     # extract the clusterrolebinding.serviceAccount.name from the values.yaml file if it exists.
-    SVC_ACCNT=$( cat ${VALUESFILE} | sed 's/#.*$//' | awk '/clusterrolebinding:/,0' | grep 'name:' | sed  ' s/^.*://; s/ *$//; /^$/d;' | head -1)
+    SVC_ACCNT=$( cat ${VALUESFILE} | sed 's/#.*$//' | awk '/clusterrolebinding:/,0' | grep 'name:' | sed  's/^.*://; s/ *$//; /^$/d;' | head -1)
     if [[ -z ${SVC_ACCNT} ]]; then
         SVC_ACCNT=pure
     fi
