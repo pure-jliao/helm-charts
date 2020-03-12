@@ -1,76 +1,62 @@
 #!/usr/bin/env bash
 
 set -xe
-IMAGE=quay.io/purestorage/pso-operator:v0.0.11
+IMAGE=quay.io/purestorage/pso-operator:v0.0.1
 NAMESPACE=pso-operator
 KUBECTL=oc
-ORCHESTRATOR=k8s
 
 usage()
 {
     echo "Usage : $0 --image=<imagename> --namespace=<namespace> --orchestrator=<orchestrator> -f <values.yaml>"
+    exit
 }
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     usage
-    exit
 fi
 
 while (("$#")); do
-    case "$1" in
-        --image=*)
-            IMAGE="${1#*=}"
-            shift
-        ;;
-        --namespace=*)
-            NAMESPACE="${1#*=}"
-            shift
-        ;;
-        --orchestrator=*)
-            ORCHESTRATOR="${1#*=}"
-            if [[ "${ORCHESTRATOR}" == "k8s" || "${ORCHESTRATOR}" == "K8s" ]]; then
-                KUBECTL=kubectl
-            elif [[ "${ORCHESTRATOR}" == "openshift" ]]; then
-                KUBECTL=oc
-            else
-                echo "orchestrator can only be 'k8s' or 'openshift'"
-                usage
-                exit
-            fi
-            shift
-        ;;
-        -f)
-            if [ "$#" -lt 2 ]; then
-                usage
-                exit
-            fi
-            VALUESFILE="$2"
-            shift
-            shift
-        ;;
-        -h|--help|*)
-            usage
-            exit
-        ;;
-    esac
+case "$1" in
+  --image=*)
+  IMAGE="${1#*=}"
+  shift
+  ;;
+  --namespace=*)
+  NAMESPACE="${1#*=}"
+  shift
+  ;;
+  --orchestrator=*)
+  ORCHESTRATOR="${1#*=}"
+  if [[ "${ORCHESTRATOR}" == "k8s" || "${ORCHESTRATOR}" == "K8s" ]]; then
+      KUBECTL=kubectl
+  elif [[ "${ORCHESTRATOR}" == "openshift" ]]; then
+      KUBECTL=oc
+  else
+      echo "orchestrator can only be 'k8s' or 'openshift'"
+      usage
+      exit
+  fi
+  shift
+  ;;
+  -f)
+  if [ "$#" -lt 2 ]; then
+    usage
+    exit
+  fi
+  VALUESFILE="$2"
+  shift
+  shift
+  ;;
+  -h|--help|*)
+  usage
+  exit
+  ;;
+  esac
 done
 
-CLUSTERROLEAPIVERSION="$(${KUBECTL} explain ClusterRole | grep "VERSION:" | awk '{ print $2 }')"
-CLUSTERROLEBINDINGAPIVERSION="$(${KUBECTL} explain ClusterRoleBinding | grep "VERSION:" | awk '{ print $2 }')"
-ROLEAPIVERSION="$(${KUBECTL} explain Role | grep "VERSION:" | awk '{ print $2 }')"
-ROLEBINDINGAPIVERSION="$(${KUBECTL} explain RoleBinding | grep "VERSION:" | awk '{ print $2 }')"
-DEPLOYMENTAPIVERSION="$(${KUBECTL} explain Deployment | grep "VERSION:" | awk '{ print $2 }')"
-
-if [[ "${ORCHESTRATOR}" == "openshift" ]]; then
-    CLUSTERROLEAPIVERSION="rbac.authorization.k8s.io/v1"
-    CLUSTERROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1"
-    ROLEAPIVERSION="rbac.authorization.k8s.io/v1"
-    ROLEBINDINGAPIVERSION="rbac.authorization.k8s.io/v1"
-    DEPLOYMENTAPIVERSION="apps/v1"
-fi
 if [[ -z ${VALUESFILE} || ! -f ${VALUESFILE} ]]; then
-    echo "File ${VALUESFILE} does not exist"
     usage
+    echo "File ${VALUESFILE} for values.yaml does not exist"
     exit 1
 fi
 
@@ -78,13 +64,13 @@ KUBECTL_NS="${KUBECTL} apply -n ${NAMESPACE} -f"
 
 # 1. Create the namespace
 if [[ "${KUBECTL}" == "kubectl" ]]; then
-    $KUBECTL create namespace ${NAMESPACE}
+    $KUBECTL create namespace $NAMESPACE
 else
-    $KUBECTL adm new-project ${NAMESPACE}
-
+    $KUBECTL adm new-project ${NAMESPACE} --node-selector=""
+    
     # Since this plugin needs to mount external volumes to containers, create a SCC to allow the flex-daemon pod to
     # use the hostPath volume plugin
-    echo '
+echo '
 kind: SecurityContextConstraints
 apiVersion: v1
 metadata:
@@ -103,11 +89,12 @@ supplementalGroups:
 
     # Grant this SCC to the service account creating the flex-daemonset
     # extract the clusterrolebinding.serviceAccount.name from the values.yaml file if it exists.
-    SVC_ACCNT=$( cat ${VALUESFILE} | sed 's/#.*$//' | awk '/clusterrolebinding:/,0' | grep 'name:' | sed  ' s/^.*://; s/ *$//; /^$/d;' | head -1)
+    SVC_ACCNT=$(cat $VALUESFILE | sed  's/#.*$//' | awk '/clusterrolebinding:/,0' | grep 'name:' | sed  's/^.*://; s/ *$//; /^$/d;' | head -1)
     if [[ -z ${SVC_ACCNT} ]]; then
         SVC_ACCNT=pure
     fi
-    $KUBECTL adm policy add-scc-to-user hostpath -n ${NAMESPACE} -z ${SVC_ACCNT}
+    $KUBECTL adm policy add-scc-to-user hostpath -n ${NAMESPACE} -z ${SVC_ACCNT} 
+
 fi
 
 # 2. Create CRD and wait until TIMEOUT seconds for the CRD to be established.
@@ -134,38 +121,38 @@ spec:
     status: {} " | ${KUBECTL} apply -f -
 
 while true; do
-    result=$(${KUBECTL} get crd/psoplugins.purestorage.com -o jsonpath='{.status.conditions[?(.type == "Established")].status}{"\n"}' | grep -i true)
-    if [ $? -eq 0 ]; then
-        break
-    fi
-    counter=$(($counter+1))
-    if [ $counter -gt $TIMEOUT ]; then
-        break
-    fi
-    sleep 1
+  result=$(${KUBECTL} get crd/psoplugins.purestorage.com -o jsonpath='{.status.conditions[?(.type == "Established")].status}{"\n"}' | grep -i true)
+  if [ $? -eq 0 ]; then
+     break
+  fi
+  counter=$(($counter+1))
+  if [ $counter -gt $TIMEOUT ]; then
+     break
+  fi
+  sleep 1
 done
 
 if [ $counter -gt $TIMEOUT ]; then
-    echo "Timed out waiting for CRD"
-    exit 1
+   echo "Timed out waiting for CRD"
+   exit 1
 fi
 
 
 # 3. Create RBAC for the PSO-Operator
-echo "
+echo '
 kind: ClusterRole
-apiVersion: ${CLUSTERROLEAPIVERSION}
+apiVersion: rbac.authorization.k8s.io/v1beta1
 metadata:
   name: pso-operator
 rules:
   - apiGroups:
     - purestorage.com
     resources:
-    - \"*\"
+    - "*"
     verbs:
-    - \"*\"
+    - "*"
   - apiGroups:
-    - \"\"
+    - ""
     resources:
     - namespaces
     verbs:
@@ -175,89 +162,91 @@ rules:
     resources:
     - storageclasses
     verbs:
-    - \"create\"
-    - \"delete\"
-# PSO operator needs to create/delete a ClusterRole and ClusterRoleBinding for provisioning PVs
+    - "create"
+    - "delete"
+# PSO operator needs to create/delete a ClusterRoleBinding with the ClusterRole system:persistent-volume-provisioner for provisioning PVs
   - apiGroups:
     - rbac.authorization.k8s.io
     resources:
     - clusterrolebindings
     - clusterroles
     verbs:
-    - \"create\"
-    - \"delete\"
+    - "create"
+    - "delete"
   - apiGroups:
     - rbac.authorization.k8s.io
     resources:
     - clusterrolebindings
     - clusterroles
     resourceNames:
-    - \"pure-provisioner-rights\"
-    - \"pure-provisioner-clusterrole\"
+    - "pure-provisioner-rights"
+    - "pure-provisioner-clusterrole"
     verbs:
-    - \"get\"
+    - "get"
 # On Openshift ClusterRoleBindings belong to a different apiGroup.
+# PSO operator needs to create/delete a ClusterRoleBinding with the ClusterRole system:persistent-volume-provisioner for provisioning PVs
   - apiGroups:
     - authorization.openshift.io
     resources:
     - clusterrolebindings
     - clusterroles
     verbs:
-    - \"create\"
-    - \"delete\"
-# PSO creates the ClusterRoleBinding 'pure-provisioner-rights' and should be able to get this by resource name
+    - "create"
+    - "delete"
+# PSO creates the ClusterRoleBinding "pure-provisioner-rights" and should be able to get this by resource name
   - apiGroups:
     - authorization.openshift.io
     resources:
     - clusterrolebindings
     - clusterroles
     resourceNames:
-    - \"pure-provisioner-rights\"
-    - \"pure-provisioner-clusterrole\"
+    - "pure-provisioner-rights"
+    - "pure-provisioner-clusterrole"
     verbs:
-    - \"get\"
-# Need the same permissions as pure-provisioner-clusterrole to be able to create it
+    - "get"
+# To create a ClusterRole with certain permissions the operator needs to have those
+# permissions as well.
+# copy from pure-provisioner-clusterrole
   - apiGroups:
-    - \"\"
+    - ""
     resources:
     - persistentvolumes
     verbs:
-    - \"create\"
-    - \"delete\"
-    - \"get\"
-    - \"list\"
-    - \"watch\"
-    - \"update\"
+    - "create"
+    - "delete"
+    - "get"
+    - "list"
+    - "watch"
+    - "update"
   - apiGroups:
-    - \"\"
+    - ""
     resources:
     - persistentvolumeclaims
     verbs:
-    - \"get\"
-    - \"list\"
-    - \"update\"
-    - \"watch\"
+    - "get"
+    - "list"
+    - "update"
+    - "watch"
   - apiGroups:
     - storage.k8s.io
     resources:
     - storageclasses
     verbs:
-    - \"get\"
-    - \"list\"
-    - \"watch\"
+    - "get"
+    - "list"
+    - "watch"
   - apiGroups:
-    - \"\"
+    - ""
     resources:
-    - \"events\"
+    - "events"
     verbs:
-    - \"create\"
-    - \"patch\"
-    - \"update\"
-    - \"watch\"
-
+    - "create"
+    - "patch"
+    - "update"
+    - "watch"
 ---
 kind: ClusterRoleBinding
-apiVersion: ${CLUSTERROLEBINDINGAPIVERSION}
+apiVersion: rbac.authorization.k8s.io/v1beta1
 metadata:
   name: pso-operator-role
 subjects:
@@ -271,12 +260,12 @@ roleRef:
 
 ---
 kind: Role
-apiVersion: ${ROLEAPIVERSION}
+apiVersion: rbac.authorization.k8s.io/v1beta1
 metadata:
   name: pso-operator
 rules:
   - apiGroups:
-    - \"\"
+    - ""
     resources:
     - pods
     - services
@@ -285,9 +274,9 @@ rules:
     - secrets
     - serviceaccounts
     verbs:
-    - \"*\"
+    - "*"
   - apiGroups:
-    - \"\"
+    - ""
     resources:
     - namespaces
     verbs:
@@ -297,34 +286,33 @@ rules:
     resources:
     - deployments
     - daemonsets
-    - replicasets
     verbs:
-    - \"*\"
+    - "*"
   - apiGroups:
     - extensions
     resources:
     - daemonsets
     verbs:
-    - \"*\"
+    - "*"
   - apiGroups:
     - rbac.authorization.k8s.io
     resources:
     - roles
     - rolebindings
     verbs:
-    - \"*\"
+    - "*"
   - apiGroups:
     - authorization.openshift.io
     resources:
     - roles
     - rolebindings
     verbs:
-    - \"*\"
+    - "*"
 
 ---
 
 kind: RoleBinding
-apiVersion: ${ROLEBINDINGAPIVERSION}
+apiVersion: rbac.authorization.k8s.io/v1beta1
 metadata:
   name: default-account-pso-operator
 subjects:
@@ -334,11 +322,11 @@ roleRef:
   kind: Role
   name: pso-operator
   apiGroup: rbac.authorization.k8s.io
-" | sed "s|REPLACE_NAMESPACE|${NAMESPACE}|" | ${KUBECTL_NS} -
+' | sed "s|REPLACE_NAMESPACE|${NAMESPACE}|" | ${KUBECTL_NS} -
 
 # 4. Create a PSO-Operator Deployment
-echo "
-apiVersion: ${DEPLOYMENTAPIVERSION}
+echo '
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: pso-operator
@@ -371,8 +359,8 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: OPERATOR_NAME
-              value: \"pso-operator\"
-" | sed "s|REPLACE_IMAGE|${IMAGE}|" | ${KUBECTL_NS} -
+              value: "pso-operator"
+' | sed "s|REPLACE_IMAGE|${IMAGE}|" | ${KUBECTL_NS} -
 
 # 5. Use the values.yaml file to create a customized PSO operator instance
 ( echo '
